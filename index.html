@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>JEWELS-AI</title>
+
+  <!-- A-Frame + MindAR -->
+  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
+
+  <style>
+    body {
+      margin: 0;
+      font-family: 'Poppins', sans-serif;
+      background: #000;
+    }
+
+   
+
+    .button-panel {
+      position: absolute;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: none;
+      z-index: 100;
+    }
+
+    .plan-button {
+      padding: 12px 24px;
+      font-size: 15px;
+      font-weight: bold;
+      border: none;
+      border-radius: 8px;
+      background-color: #5E0F8B;
+      color: #fff;
+      cursor: pointer;
+      min-width: 160px;
+      transition: background 0.3s;
+    }
+
+    .plan-button:hover {
+      background-color: #7a17b8;
+    }
+
+    /* hide default A-Frame enter-vr button */
+    .a-enter-vr-button {
+      display: none !important;
+    }
+
+    /* simple toast for blocked actions (non-intrusive) */
+    #toast {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      background: rgba(255,255,255,0.12);
+      color: white;
+      padding: 8px 12px;
+      border-radius: 8px;
+      z-index: 200;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+
+  
+
+  <!-- Play/Pause Button -->
+  <div class="button-panel" id="planButtons" aria-hidden="true">
+    <button class="plan-button" id="toggleButton" aria-pressed="false">▶️ Play Video</button>
+  </div>
+
+  <div id="toast" role="status" aria-live="polite">Action Disabled</div>
+
+  <!-- AR Scene -->
+  <a-scene 
+    mindar-image="imageTargetSrc: ./targets.mind" 
+    color-space="sRGB" 
+    renderer="colorManagement: true; physicallyCorrectLights: true; antialias: true" 
+    vr-mode-ui="enabled: false" 
+    device-orientation-permission-ui="enabled: false">
+
+    <a-assets>
+      <!-- playsinline helps mobile; crossorigin in case assets are served from another origin -->
+      <video id="plan1Video" src="plan1.mp4" playsinline preload="auto" loop crossorigin="anonymous"></video>
+    </a-assets>
+
+    <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
+
+    <a-entity id="target1" mindar-image-target="targetIndex: 0">
+      <!-- material src set here so the plane is ready; side: double avoids one-sided rendering -->
+      <a-plane 
+        id="videoDisplay" 
+        position="0 0 0" 
+        width="1" 
+        height="1" 
+        material="src: #plan1Video; shader: flat; side: double">
+      </a-plane>
+    </a-entity>
+  </a-scene>
+
+  <script>
+    const sceneEl = document.querySelector('a-scene');
+    const videoDisplay = document.querySelector('#videoDisplay');
+    const videoEl = document.querySelector('#plan1Video');
+    const buttonsContainer = document.querySelector('#planButtons');
+    const toggleButton = document.querySelector('#toggleButton');
+    const target = document.querySelector('#target1');
+    const toast = document.querySelector('#toast');
+
+    let isPlaying = false;
+
+    // Utility: show small toast
+    function showToast(msg, t = 1200) {
+      toast.textContent = msg;
+      toast.style.display = 'block';
+      setTimeout(() => { toast.style.display = 'none'; }, t);
+    }
+
+    // Make sure video can be used as a texture
+    videoEl.setAttribute('playsinline', '');
+    // Optionally uncomment if you want autoplay to be allowed by browsers (muted)
+    // videoEl.muted = true;
+
+    // --- MindAR start after scene is ready ---
+    // Some versions require calling the system start explicitly.
+    sceneEl.addEventListener('renderstart', () => {
+      // Try a few known system keys safely
+      const sysKeys = ['mindar-image-system', 'mindar-image'];
+      for (const k of sysKeys) {
+        const sys = sceneEl.systems && sceneEl.systems[k];
+        if (sys && typeof sys.start === 'function') {
+          try { sys.start(); } catch (err) { console.warn('Error starting MindAR system:', err); }
+        }
+      }
+      // Some installs expose component with start()
+      const comp = sceneEl.querySelector('[mindar-image]');
+      if (comp && comp.components && comp.components['mindar-image'] && typeof comp.components['mindar-image'].start === 'function') {
+        try { comp.components['mindar-image'].start(); } catch (e) { /* ignore */ }
+      }
+    });
+
+    // If `targetFound`/`targetLost` events exist on the target entity they will show/hide controls.
+    // MindAR usually emits them. Add defensive checks.
+    target.addEventListener && target.addEventListener('targetFound', () => {
+      buttonsContainer.style.display = 'block';
+      buttonsContainer.setAttribute('aria-hidden', 'false');
+    });
+
+    target.addEventListener && target.addEventListener('targetLost', () => {
+      buttonsContainer.style.display = 'none';
+      buttonsContainer.setAttribute('aria-hidden', 'true');
+      if (!videoEl.paused) {
+        videoEl.pause();
+      }
+      isPlaying = false;
+      toggleButton.textContent = "▶️ Play Video";
+      toggleButton.setAttribute('aria-pressed', 'false');
+    });
+
+    // Toggle play/pause on button click
+    toggleButton.addEventListener('click', async () => {
+      if (!isPlaying) {
+        // ensure plane material points to the video
+        videoDisplay.setAttribute('material', 'src', '#plan1Video');
+
+        // Try to play and handle promise rejection (autoplay policy)
+        try {
+          const playResult = videoEl.play();
+          if (playResult !== undefined) {
+            await playResult;
+          }
+          isPlaying = true;
+          toggleButton.textContent = "⏸ Pause Video";
+          toggleButton.setAttribute('aria-pressed', 'true');
+        } catch (err) {
+          console.warn('video play failed', err);
+          showToast('Playback blocked — tap the screen to allow audio/video', 2000);
+          // optionally try a user gesture fallback: briefly unmute or show instructions
+        }
+      } else {
+        videoEl.pause();
+        isPlaying = false;
+        toggleButton.textContent = "▶️ Play Video";
+        toggleButton.setAttribute('aria-pressed', 'false');
+      }
+    });
+
+    // Pause the video if it's removed/unloaded
+    window.addEventListener('pagehide', () => {
+      if (!videoEl.paused) videoEl.pause();
+    });
+
+    // --- Disable Right-Click ---
+    document.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      showToast("Action Disabled");
+    });
+
+    // --- Disable some Dev Tools shortcuts (improved) ---
+    document.addEventListener("keydown", (e) => {
+      // Normalize key detection; include Meta for macOS (Cmd)
+      const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+      const meta = isMac ? e.metaKey : e.ctrlKey;
+
+      // Block common devkeys: F12, Ctrl+Shift+I/J/C, Ctrl+U, Cmd+Option+I (mapped with meta/alt)
+      if (
+        e.key === "F12" ||
+        (meta && e.shiftKey && (e.key === "I" || e.key === "J" || e.key === "C")) ||
+        (meta && e.key === "u") // view-source
+      ) {
+        e.preventDefault();
+        showToast("Action Disabled");
+      }
+    });
+
+    // Optional: show/hide button panel if video data ready and marker already tracked
+    videoEl.addEventListener('loadeddata', () => {
+      // nothing needed here — kept for debugging
+      // console.log('video loaded');
+    });
+  </script>
+</body>
+</html>
